@@ -76,6 +76,32 @@ fn configure_arg0_dispatch_for_test_binaries() {
     let _ = TEST_ARG0_PATH_ENTRY.get_or_init(codex_arg0::arg0_dispatch);
 }
 
+/// #1367: the least stack a thread of a test binary gets. Sessions run on the
+/// threads the test harness and Tokio spawn, which get `RUST_MIN_STACK`
+/// (2 MiB unless set; CI sets 8 MiB), while the product runs them on 16 MiB
+/// threads (`codex-arg0`) and some tests already needed 32 MiB (#553). A
+/// debug-build frame larger than the guard page overflows without the
+/// "has overflowed its stack" message: a bare SIGSEGV, as in #1367.
+pub const TEST_THREAD_MIN_STACK_BYTES: usize = 32 * 1024 * 1024;
+
+#[cfg_attr(
+    target_vendor = "apple",
+    ctor(unsafe, body(link_section = "__TEXT,__text,regular,pure_instructions"))
+)]
+#[cfg_attr(not(target_vendor = "apple"), ctor(unsafe))]
+fn raise_the_minimum_thread_stack_for_tests() {
+    let current = std::env::var("RUST_MIN_STACK")
+        .ok()
+        .and_then(|bytes| bytes.parse::<usize>().ok());
+    if current.is_some_and(|bytes| bytes >= TEST_THREAD_MIN_STACK_BYTES) {
+        return;
+    }
+    // Safety: this ctor runs at process startup before test threads begin.
+    unsafe {
+        std::env::set_var("RUST_MIN_STACK", TEST_THREAD_MIN_STACK_BYTES.to_string());
+    }
+}
+
 #[cfg_attr(
     target_vendor = "apple",
     ctor(unsafe, body(link_section = "__TEXT,__text,regular,pure_instructions"))
