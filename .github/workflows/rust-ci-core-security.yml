@@ -157,7 +157,7 @@ jobs:
       - name: "cargo test codex-core Aggressive/Moderate suites (#902)"
         run: |
           cargo test --locked --target ${{ inputs.target }} -p codex-core --test all -- \
-            suite::issue_506:: suite::issue_584:: suite::issue_620_622:: suite::issue_736_740:: suite::issue_747:: suite::issue_748::
+            suite::issue_506:: suite::issue_584:: suite::issue_620_622:: suite::issue_736_740:: suite::issue_747:: suite::issue_748:: suite::issue_1367::
 
       - name: "cargo test codex-core Aggressive/Moderate suites (macOS, #902, TMPDIR=/tmp)"
         if: ${{ runner.os == 'macOS' }}
@@ -165,7 +165,7 @@ jobs:
           TMPDIR: /tmp
         run: |
           cargo test --locked --target ${{ inputs.target }} -p codex-core --test all -- \
-            suite::issue_506:: suite::issue_584:: suite::issue_620_622:: suite::issue_736_740:: suite::issue_747:: suite::issue_748::
+            suite::issue_506:: suite::issue_584:: suite::issue_620_622:: suite::issue_736_740:: suite::issue_747:: suite::issue_748:: suite::issue_1367::
 
       # Only main saves caches; PRs and branch runs restore main's (#636).
       - name: Save sccache cache
