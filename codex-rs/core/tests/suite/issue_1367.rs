@@ -3,11 +3,13 @@
 //! threads the test harness and Tokio spawn, whose stack is
 //! `RUST_MIN_STACK` (8 MiB in CI), not the 16 MiB the product gives its
 //! threads; a frame that steps over the guard page is a SIGSEGV with no
-//! overflow message. The test binaries now raise that minimum
-//! ([`TEST_THREAD_MIN_STACK_BYTES`]) whatever the environment sets; these
-//! tests fail if a thread spawned the way sessions' threads are gets less.
+//! overflow message. The test binaries now raise that minimum to 32 MiB
+//! whatever the environment sets; these tests fail if a thread spawned the
+//! way sessions' threads are gets less.
 
-use core_test_support::TEST_THREAD_MIN_STACK_BYTES;
+/// What sessions in tests need (#553, #1367). Spelled out here rather than
+/// imported, so these tests still build, and fail, without the fix.
+const TEST_THREAD_MIN_STACK_BYTES: usize = 32 * 1024 * 1024;
 
 /// The platform may count its guard page inside a thread's stack size.
 const GUARD_ALLOWANCE_BYTES: usize = 64 * 1024;
