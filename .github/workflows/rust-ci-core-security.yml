@@ -75,6 +75,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      # PROOF ONLY (not part of the PR): crash a process with SIGSEGV and fail.
+      - name: "PROOF: deliberate SIGSEGV crash"
+        working-directory: .
+        run: |
+          printf 'int main(void){volatile int *p = 0; return *p;}\n' > "$RUNNER_TEMP/crash.c"
+          cc -o "$RUNNER_TEMP/crash1367" "$RUNNER_TEMP/crash.c"
+          "$RUNNER_TEMP/crash1367"
       - uses: ./.github/actions/setup-ci
       # bubblewrap: the integration tests run commands in the Linux sandbox,
       # as rust-ci-full's nextest job does.
