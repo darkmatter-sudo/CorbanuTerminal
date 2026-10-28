@@ -984,13 +984,16 @@ pub(super) async fn submission_loop(
                     false
                 }
                 Op::UserInput { .. } => {
-                    user_input_or_turn(
+                    // Boxed: a turn's future is large in debug builds, and
+                    // polling it inline in this dispatch block made the
+                    // block's frame overflow a 2 MiB worker stack.
+                    Box::pin(user_input_or_turn(
                         &sess,
                         sub.id.clone(),
                         sub.op,
                         sub.client_user_message_id,
                         sub.parent_turn_id,
-                    )
+                    ))
                     .await;
                     false
                 }
