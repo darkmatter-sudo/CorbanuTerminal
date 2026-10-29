@@ -6763,7 +6763,8 @@ fn issue_1482_wrapper_option_values_are_not_the_command() {
         ("sudo --chdir=sub ./run.sh", 2, "run.sh"),
         ("sudo --close-from 3 sh x", 3, "sh"),
         ("sudo --user root sh x", 3, "sh"),
-        ("sudo -nR / sh x", 3, "sh"),
+        // `--chr` is `--chroot`, left out of the table: its `-C 3` is read as before.
+        ("sudo --chr -C 3 ./x", 4, "x"),
         ("sudo -C=3 sh x", 2, "sh"),
         ("sudo --chdir bash x", 3, "x"),
         ("env -iu X sh x", 3, "sh"),
@@ -6794,6 +6795,7 @@ fn issue_1482_wrapper_option_values_are_not_the_command() {
         (&there[..], "sudo --chdir sub ./run.sh"),
         (&there[..], "sudo --chd sub ./run.sh"),
         (&there[..], "env -iC sub ./run.sh"),
+        (&[("x", evil)][..], "sudo --chr -C 3 ./x"),
     ] {
         if in_workspace(files, line).is_none() {
             wrong.push(line);
