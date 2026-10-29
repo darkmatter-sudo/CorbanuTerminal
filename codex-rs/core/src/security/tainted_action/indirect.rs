@@ -249,24 +249,16 @@ pub(super) const WRAPPERS: &[(&str, &[&str], usize)] = &[
 /// #1482: how many words a wrapper's option word uses: one, or two when
 /// it takes a value that is not attached. A letter that takes a value
 /// takes the rest of its word, or the next word at the end of a cluster
-/// (`sudo -nC 3`, `sudo -nD sub`, `env -iu X`). A long option without an
-/// attached `=value` takes the next word when it is one that takes a
-/// value or, as getopt reads it, an abbreviation of one (`sudo --chdir
-/// sub`, `sudo --chd sub`).
+/// (`sudo -nC 3`, `sudo -nD sub`, `env -iu X`). A long option takes the
+/// next word only when it is named in full (`sudo --chdir sub`); an
+/// abbreviation is read as before, since some long options (`xargs
+/// --replace`) take an optional value that is never a separate word.
 pub(super) fn option_words(option: &str, value_options: &[&str]) -> usize {
     if value_options.contains(&option) {
         return 2;
     }
-    if let Some(long) = option.strip_prefix("--") {
-        let takes_value = !long.is_empty()
-            && !long.contains('=')
-            && value_options.iter().any(|value_option| {
-                work::step();
-                value_option
-                    .strip_prefix("--")
-                    .is_some_and(|name| name.starts_with(long))
-            });
-        return 1 + usize::from(takes_value);
+    if option.starts_with("--") {
+        return 1;
     }
     let Some(letters) = option.strip_prefix('-') else {
         return 1;

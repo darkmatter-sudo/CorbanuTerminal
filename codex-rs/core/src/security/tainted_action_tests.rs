@@ -6759,7 +6759,6 @@ fn issue_1482_wrapper_option_values_are_not_the_command() {
         ("sudo -nD sub ./run.sh", 3, "run.sh"),
         ("sudo -nDsub ./run.sh", 2, "run.sh"),
         ("sudo --chdir sub ./run.sh", 3, "run.sh"),
-        ("sudo --chd sub ./run.sh", 3, "run.sh"),
         ("sudo --chdir=sub ./run.sh", 2, "run.sh"),
         ("sudo --close-from 3 sh x", 3, "sh"),
         ("sudo --user root sh x", 3, "sh"),
@@ -6793,7 +6792,6 @@ fn issue_1482_wrapper_option_values_are_not_the_command() {
         (&there[..], "sudo -nD sub ./run.sh"),
         (&there[..], "sudo -nDsub ./run.sh"),
         (&there[..], "sudo --chdir sub ./run.sh"),
-        (&there[..], "sudo --chd sub ./run.sh"),
         (&there[..], "env -iC sub ./run.sh"),
         (&[("x", evil)][..], "sudo --chr -C 3 ./x"),
     ] {
