@@ -98,6 +98,7 @@ mod issue_1139;
 mod issue_1355;
 mod issue_1976;
 mod issue_2000;
+mod issue_2049;
 mod issue_443;
 mod issue_445;
 mod issue_505;
