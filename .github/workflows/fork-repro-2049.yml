@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - ci/repro-2049
+  workflow_dispatch:
 
 permissions:
   contents: read
