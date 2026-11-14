@@ -1,0 +1,57 @@
+name: fork-repro-2049
+
+# Fork-only (not part of any pull request): runs the #2049 reproduction on
+# a Windows client (no Windows sandbox set up) and on a Linux client.
+on:
+  push:
+    branches:
+      - ci/repro-2049
+
+permissions:
+  contents: read
+
+jobs:
+  repro:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+        working-directory: codex-rs
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Environment
+        run: |
+          set +e
+          git rev-parse HEAD
+          uname -a
+          if [ "$RUNNER_OS" = Windows ]; then
+            cmd //c ver
+            powershell -NoProfile -Command "(Get-CimInstance Win32_OperatingSystem) | Select-Object Caption,Version,BuildNumber | Format-List"
+          fi
+          rustup show active-toolchain
+      - name: Install protoc
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler libcap-dev
+      - name: rustfmt
+        run: rustfmt --edition 2024 --check core/tests/suite/issue_2049.rs
+      - name: cargo test issue_2049
+        env:
+          RUST_BACKTRACE: "1"
+        run: |
+          set +e
+          cargo test -p codex-core --test all issue_2049 -- --nocapture --test-threads=1 2>&1 | tee ../repro-2049.log
+          rc=${PIPESTATUS[0]}
+          echo "cargo test exit=$rc"
+          exit "$rc"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: always()
+        with:
+          name: repro-2049-${{ matrix.os }}
+          path: repro-2049.log
