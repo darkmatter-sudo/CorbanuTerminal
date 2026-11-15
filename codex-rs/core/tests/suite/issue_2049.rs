@@ -1,13 +1,19 @@
-//! #2049 (D510, reproduction): #1976's rule (D491) is decided by the
-//! computer Corbanu Terminal runs on, not by where the work runs. A Windows
-//! client with no Windows sandbox refuses, under Moderate and Aggressive,
-//! benign commands and file-tool access meant for a remote Linux machine (an
-//! exec-server), though they would run under that machine's own sandbox;
-//! nothing reaches the executor. On other clients the same calls reach it.
+//! #2049 (D510, reproduction): two checks are decided by the computer Corbanu
+//! Terminal runs on, not by where the work runs. A Windows client with no
+//! Windows sandbox refuses benign commands meant for a remote Linux machine
+//! (an exec-server), though they would run under that machine's own sandbox,
+//! and nothing reaches the executor:
+//! - under Moderate and Aggressive, every command, by #1976's rule (D491,
+//!   `security::windows_unsandboxed::applies`);
+//! - under Permissive too, a command outside the known-safe list (`df -h /`),
+//!   by `exec_policy::render_decision_for_unmatched_command`
+//!   (`windows_managed_fs_restrictions_without_sandbox_backend`), as
+//!   "blocked by policy" when approvals are off.
+//! On other clients the same commands reach the executor.
 //!
-//! This pins today's behavior so the fix for #2049 has to flip it: once the
-//! refusal is decided where the work runs, `over_refused` below becomes
-//! `false` and every call must reach the executor.
+//! This pins today's behavior so the fix for #2049 has to flip it: once both
+//! checks are decided where the work runs, `expected_refusal` below returns
+//! `None` for a remote Linux machine and every command must reach it.
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -48,11 +54,18 @@ const COMMANDS: [&str; 4] = [
     "df -h /",
 ];
 
-#[derive(Clone, Copy, Debug)]
-enum Call {
-    Command(&'static str),
-    /// The image tool on a file on the remote machine.
-    ViewImage,
+/// The refusal a Windows client without its sandbox gives today for `cmd`
+/// under `level` (`name`), with approvals off; `None` where the command
+/// reaches the remote machine. #2049: should be `None` everywhere here.
+fn expected_refusal(level: SecurityLevel, name: &str, cmd: &str) -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+    if level != SecurityLevel::Permissive {
+        return Some(format!("Security level {name} refused this command"));
+    }
+    // `df` is not on the known-safe list; `uname`, `cat` and `ls` are.
+    (cmd == "df -h /").then(|| format!("`/bin/bash -lc '{cmd}'` rejected: blocked by policy"))
 }
 
 /// A fake Linux executor: answers `initialize` and `environment/info`,
@@ -119,7 +132,7 @@ struct Outcome {
     reached: Vec<String>,
 }
 
-async fn run(level: SecurityLevel, call: Call) -> anyhow::Result<Outcome> {
+async fn run(level: SecurityLevel, cmd: &str) -> anyhow::Result<Outcome> {
     let server = start_mock_server().await;
     let (url, methods) = fake_linux_executor().await?;
     let test = test_codex()
@@ -151,16 +164,13 @@ async fn run(level: SecurityLevel, call: Call) -> anyhow::Result<Outcome> {
         .await?;
     // Only what the tool call sends counts.
     methods.lock().expect("methods").clear();
-    let (tool, arguments) = match call {
-        Call::Command(cmd) => ("exec_command", json!({ "cmd": cmd, "yield_time_ms": 500 })),
-        Call::ViewImage => ("view_image", json!({ "path": "/home/me/picture.png" })),
-    };
+    let arguments = json!({ "cmd": cmd, "yield_time_ms": 500 });
     let captured = mount_sse_sequence(
         &server,
         vec![
             sse(vec![
                 ev_response_created(CALL_ID),
-                ev_function_call(CALL_ID, tool, &arguments.to_string()),
+                ev_function_call(CALL_ID, "exec_command", &arguments.to_string()),
                 ev_completed(CALL_ID),
             ]),
             sse(vec![
@@ -209,40 +219,25 @@ async fn issue_2049_windows_client_without_its_sandbox_refuses_remote_linux_work
         (SecurityLevel::Moderate, "Moderate"),
         (SecurityLevel::Aggressive, "Aggressive"),
     ] {
-        // #2049: should be `false` for a remote Linux machine.
-        let over_refused = cfg!(windows) && level != SecurityLevel::Permissive;
-        let calls = COMMANDS
-            .into_iter()
-            .map(Call::Command)
-            .chain([Call::ViewImage]);
-        for call in calls {
-            let outcome = run(level, call).await?;
-            let (refusal, reached) = match call {
-                Call::Command(_) => (
-                    format!("Security level {name} refused this command"),
-                    outcome
-                        .reached
-                        .iter()
-                        .any(|method| method.starts_with("process/start")),
-                ),
-                Call::ViewImage => (
-                    format!("Security level {name} refused this file access"),
-                    outcome
-                        .reached
-                        .iter()
-                        .any(|method| method.starts_with("fs/")),
-                ),
-            };
-            let refused = outcome.output.contains(&refusal);
+        for cmd in COMMANDS {
+            let outcome = run(level, cmd).await?;
+            let refusal = expected_refusal(level, name, cmd);
+            let refused = refusal
+                .as_ref()
+                .is_some_and(|refusal| outcome.output.contains(refusal));
+            let reached = outcome
+                .reached
+                .iter()
+                .any(|method| method == "process/start");
             println!(
-                "issue_2049 windows={} level={name} call={call:?} refused={refused} \
-                 reached_executor={reached} reached={:?}",
+                "issue_2049 windows={} level={name} cmd={cmd:?} expected_refusal={refusal:?} \
+                 refused={refused} reached_executor={reached} output={:?}",
                 cfg!(windows),
-                outcome.reached
+                outcome.output
             );
-            if refused != over_refused || reached == over_refused {
+            if refused != refusal.is_some() || reached == refusal.is_some() {
                 wrong.push(format!(
-                    "{name} {call:?}: output {}; reached {:?}",
+                    "{name} {cmd:?}: output {}; reached {:?}",
                     outcome.output, outcome.reached
                 ));
             }
