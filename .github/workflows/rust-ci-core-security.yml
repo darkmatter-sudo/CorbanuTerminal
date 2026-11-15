@@ -1,215 +1,65 @@
 name: rust-ci core security tests
 
-# codex-core's security tests (`security::` unit tests: protected paths, read
-# denials, taint, approvals; and the integration tests below) on one runner.
-# Shared by rust-ci.yml (PR: Linux and macOS) and rust-ci-full.yml
-# (postmerge: macOS; Linux runs the whole suite there). Before this, no job
-# ran codex-core tests on macOS, so a
-# macOS-only security failure (#512: a denial spelled through the `/tmp` or
-# `/var` link) stayed red on main unnoticed.
-#
-# #553: also the PF-23/PF-25 security integration tests (`suite::pf_23_s01`,
-# `suite::pf_25_s01`: post-taint checks for MCP, `write_stdin` and code mode,
-# sandboxed home reads, grants). They need the code-mode host and the test MCP
-# server, which `cargo test -p codex-core` does not build; without the host,
-# code mode is unavailable and its taint test would check nothing.
-#
-# #902: also the Aggressive/Moderate approval and denial suites (`issue_506`,
-# `issue_584`, `issue_620_622`, `issue_736_740`, `issue_747`, `issue_748`).
-# No other job runs them on macOS; on Linux only postmerge rust-ci-full's
-# whole suite did, so a Linux-only break showed up on main. macOS runs them
-# in both TMPDIR steps (`/var` and `/tmp` are links there). Linux runs them
-# once: this job leaves TMPDIR unset, so `/tmp` is already the default.
-# `issue_506` (and the keychain cases) are macOS-only, so Linux runs 13
-# tests, macOS 18. About 15-30 s per step.
+# Fork-only dispatch copy (this branch reuses the registered workflow file
+# name so the fork can dispatch it; never part of any pull request): runs the #2049 reproduction on
+# a Windows client (no Windows sandbox set up) and on a Linux client.
 on:
-  workflow_call:
-    inputs:
-      runner:
-        required: true
-        type: string
-      target:
-        required: true
-        type: string
-      save_cache:
-        description: >-
-          Save the sccache cache (only ever on main, #636). blocking-ci turns
-          it off for macOS because postmerge rust-ci-full saves the same
-          cache for the same commit.
-        required: false
-        type: boolean
-        default: true
   workflow_dispatch:
     inputs:
       runner:
-        description: Runner label (ubuntu-24.04 or macos-15).
-        required: true
+        description: unused (fork-only #2049 reproduction)
+        required: false
         type: string
       target:
-        description: Rust target triple for that runner.
-        required: true
+        description: unused
+        required: false
         type: string
 
 permissions:
   contents: read
 
 jobs:
-  test:
-    name: "cargo test codex-core security::"
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 60
+  repro:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     defaults:
       run:
+        shell: bash
         working-directory: codex-rs
-    env:
-      # sccache cannot cache incremental compilations.
-      CARGO_INCREMENTAL: "0"
-      # Bounded: each runner keeps one cache within the repository quota.
-      SCCACHE_CACHE_SIZE: 2G
-      # Tests must never reach the runner's OS keyring.
-      CORBANU_TEST_NO_NATIVE_KEYRING: "1"
-      RUST_BACKTRACE: "1"
-      RUST_MIN_STACK: "8388608" # 8 MiB
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-ci
-      # bubblewrap: the integration tests run commands in the Linux sandbox,
-      # as rust-ci-full's nextest job does.
-      - name: Install Linux build dependencies
-        if: ${{ runner.os == 'Linux' }}
-        working-directory: .
+      - name: Environment
         run: |
-          set -euo pipefail
-          sudo apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libcap-dev bubblewrap
-      - name: Enable unprivileged user namespaces (Linux)
-        if: ${{ runner.os == 'Linux' }}
-        run: |
-          sudo sysctl -w kernel.unprivileged_userns_clone=1
-          if sudo sysctl -a 2>/dev/null | grep -q '^kernel.apparmor_restrict_unprivileged_userns'; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          set +e
+          git rev-parse HEAD
+          uname -a
+          if [ "$RUNNER_OS" = Windows ]; then
+            cmd //c ver
+            powershell -NoProfile -Command "(Get-CimInstance Win32_OperatingSystem) | Select-Object Caption,Version,BuildNumber | Format-List"
           fi
-      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
-        with:
-          targets: ${{ inputs.target }}
-      - uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532 # v2.62.49
-        with:
-          tool: sccache@0.12.0
-      # Local-disk sccache persisted with actions/cache, as in
-      # rust-ci-lint-build.yml's fallback.
-      - name: Configure sccache
-        id: sccache_config
-        run: |
-          set -euo pipefail
-          {
-            echo "SCCACHE_DIR=${CI_BUILD_ROOT}/sccache"
-            echo "RUSTC_WRAPPER=$(command -v sccache)"
-          } >> "$GITHUB_ENV"
-          echo "lockhash=$(cat Cargo.lock rust-toolchain.toml | shasum -a 256 | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - name: Restore sccache cache
-        id: sccache_restore
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.SCCACHE_DIR }}
-          key: sccache-core-security-${{ inputs.runner }}-${{ inputs.target }}-${{ steps.sccache_config.outputs.lockhash }}-${{ github.run_id }}
-          restore-keys: |
-            sccache-core-security-${{ inputs.runner }}-${{ inputs.target }}-${{ steps.sccache_config.outputs.lockhash }}-
-            sccache-core-security-${{ inputs.runner }}-${{ inputs.target }}-
-
-      - name: Build the codex-core test binaries
-        run: |
-          cargo test --locked --target ${{ inputs.target }} -p codex-core --lib --no-run
-          cargo test --locked --target ${{ inputs.target }} -p codex-core --test all --no-run
-
-      # Found next to the test binaries by `cargo_bin` (same target folder).
-      # Fewer than `just test` builds: these suites need no `codex` CLI or
-      # wallet daemon.
-      - name: Build the integration-test helpers
-        run: |
-          cargo build --locked --target ${{ inputs.target }} -p codex-code-mode-host -p codex-rmcp-client --bins
-
-      # The runner's own TMPDIR (on macOS a folder under the `/var` link).
-      - name: "cargo test codex-core security::"
-        run: |
-          cargo test --locked --target ${{ inputs.target }} -p codex-core --lib -- security::
-
-      # Temporary folders under `/tmp` (on macOS a link to `/private/tmp`).
-      - name: "cargo test codex-core security:: (TMPDIR=/tmp)"
+          rustup show active-toolchain
+      - name: Install protoc
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler libcap-dev
+      - name: rustfmt
+        run: rustfmt --edition 2024 --check core/tests/suite/issue_2049.rs
+      - name: cargo test issue_2049
         env:
-          TMPDIR: /tmp
+          RUST_BACKTRACE: "1"
         run: |
-          cargo test --locked --target ${{ inputs.target }} -p codex-core --lib -- security::
-
-      - name: "cargo test codex-core suite::pf_23_s01 suite::pf_25_s01"
-        run: |
-          cargo test --locked --target ${{ inputs.target }} -p codex-core --test all -- suite::pf_23_s01 suite::pf_25_s01
-
-      - name: "cargo test codex-core suite::pf_23_s01 suite::pf_25_s01 (TMPDIR=/tmp)"
-        env:
-          TMPDIR: /tmp
-        run: |
-          cargo test --locked --target ${{ inputs.target }} -p codex-core --test all -- suite::pf_23_s01 suite::pf_25_s01
-
-      - name: "cargo test codex-core Aggressive/Moderate suites (#902)"
-        run: |
-          cargo test --locked --target ${{ inputs.target }} -p codex-core --test all -- \
-            suite::issue_506:: suite::issue_584:: suite::issue_620_622:: suite::issue_736_740:: suite::issue_747:: suite::issue_748::
-
-      - name: "cargo test codex-core Aggressive/Moderate suites (macOS, #902, TMPDIR=/tmp)"
-        if: ${{ runner.os == 'macOS' }}
-        env:
-          TMPDIR: /tmp
-        run: |
-          cargo test --locked --target ${{ inputs.target }} -p codex-core --test all -- \
-            suite::issue_506:: suite::issue_584:: suite::issue_620_622:: suite::issue_736_740:: suite::issue_747:: suite::issue_748::
-
-      # #1367: a test binary once died with a bare SIGSEGV and no output, and
-      # the log could not say which thread faulted. When this job fails on
-      # macOS, keep the crash reports (`*.ips`) so the next occurrence can.
-      # The runner image ships old reports from its own build, so only take
-      # files changed within this job's 60-minute timeout (+10). ReportCrash
-      # writes a report a few seconds after the crash, so wait briefly when
-      # none is there yet.
-      - name: Collect macOS crash reports (#1367)
-        if: ${{ failure() && runner.os == 'macOS' }}
-        working-directory: .
-        run: |
-          set -uo pipefail
-          out="${RUNNER_TEMP}/crash-reports"
-          mkdir -p "$out"
-          for _ in 1 2 3 4 5 6; do
-            find "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports \
-              -maxdepth 1 -name '*.ips' -mmin -70 -exec cp -p {} "$out/" \; 2>/dev/null || true
-            [ -n "$(ls -A "$out")" ] && break
-            sleep 5
-          done
-          ls -l "$out"
-      - name: Upload macOS crash reports (#1367)
-        if: ${{ failure() && runner.os == 'macOS' }}
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: macos-crash-reports-${{ inputs.target }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/crash-reports/
-          if-no-files-found: ignore
-          retention-days: 7
-
-      # Only main saves caches; PRs and branch runs restore main's (#636).
-      - name: Save sccache cache
-        if: always() && !cancelled() && inputs.save_cache && github.ref == 'refs/heads/main'
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.SCCACHE_DIR }}
-          key: sccache-core-security-${{ inputs.runner }}-${{ inputs.target }}-${{ steps.sccache_config.outputs.lockhash }}-${{ github.run_id }}
-
-      - name: sccache stats
+          set +e
+          cargo test -p codex-core --test all issue_2049 -- --nocapture --test-threads=1 2>&1 | tee ../repro-2049.log
+          rc=${PIPESTATUS[0]}
+          echo "cargo test exit=$rc"
+          exit "$rc"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         if: always()
-        continue-on-error: true
-        run: sccache --show-stats || true
-
-      - name: Check for a clean worktree
-        if: always() && !cancelled()
-        uses: ./.github/actions/check-clean-worktree
+        with:
+          name: repro-2049-${{ matrix.os }}
+          path: repro-2049.log
